@@ -79,7 +79,7 @@ CREATE TABLE Alunos (
     turno VARCHAR(10) NOT NULL CHECK (turno IN ('Manha', 'Tarde', 'Noite'))
 );
 
--- Tabelas de Logs
+-- Tabelas de Logs  
 CREATE TABLE LogResponsaveis (
     id SERIAL PRIMARY KEY,
     cpf VARCHAR(11),
