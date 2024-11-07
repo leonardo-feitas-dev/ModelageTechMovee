@@ -1,4 +1,10 @@
 -- ============================================
+-- Extensões Necessárias
+-- ============================================
+-- Ativando a extensão 'uuid-ossp' para gerar UUIDs, se necessário
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================
 -- Tabelas
 -- ============================================
 
@@ -66,7 +72,7 @@ CREATE TABLE Escolas (
     endereco_id INT REFERENCES Enderecos(id)
 );
 
--- Tabela de Alunos (Alterada)
+-- Tabela de Alunos
 CREATE TABLE Alunos (
     cpf VARCHAR(11) PRIMARY KEY,
     nome VARCHAR(100) NOT NULL,
@@ -79,98 +85,161 @@ CREATE TABLE Alunos (
     turno VARCHAR(10) NOT NULL CHECK (turno IN ('Manha', 'Tarde', 'Noite'))
 );
 
--- Tabelas de Logs
+-- ============================================
+-- Tabelas de Logs para todas as tabelas
+-- ============================================
+
+-- Log para Enderecos
+CREATE TABLE LogEnderecos (
+    id SERIAL PRIMARY KEY,
+    endereco_id INT,
+    operacao VARCHAR(10),
+    alteracao TEXT,
+    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Log para Fotos
+CREATE TABLE LogFotos (
+    id SERIAL PRIMARY KEY,
+    foto_id INT,
+    operacao VARCHAR(10),
+    alteracao TEXT,
+    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Log para Telefones
+CREATE TABLE LogTelefones (
+    id SERIAL PRIMARY KEY,
+    telefone_id INT,
+    operacao VARCHAR(10),
+    alteracao TEXT,
+    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Log para Escolas
+CREATE TABLE LogEscolas (
+    id SERIAL PRIMARY KEY,
+    escola_id INT,
+    operacao VARCHAR(10),
+    alteracao TEXT,
+    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Log para Responsaveis
 CREATE TABLE LogResponsaveis (
     id SERIAL PRIMARY KEY,
-    cpf VARCHAR(11),
+    responsavel_cpf VARCHAR(11),
     operacao VARCHAR(10),
-    alteracao VARCHAR(255),
+    alteracao TEXT,
     data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Log para Transportadores
 CREATE TABLE LogTransportadores (
     id SERIAL PRIMARY KEY,
-    cnh VARCHAR(11),
+    transportador_cnh VARCHAR(11),
     operacao VARCHAR(10),
-    alteracao VARCHAR(255),
+    alteracao TEXT,
     data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE LogAlunos (
-    id SERIAL PRIMARY KEY,
-    cpf VARCHAR(11),
-    operacao VARCHAR(10),
-    alteracao VARCHAR(255),
-    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
+-- Log para Vans
 CREATE TABLE LogVans (
     id SERIAL PRIMARY KEY,
-    placa VARCHAR(7),
+    van_placa VARCHAR(7),
     operacao VARCHAR(10),
-    alteracao VARCHAR(255),
+    alteracao TEXT,
+    data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Log para Alunos
+CREATE TABLE LogAlunos (
+    id SERIAL PRIMARY KEY,
+    aluno_cpf VARCHAR(11),
+    operacao VARCHAR(10),
+    alteracao TEXT,
     data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ============================================
--- Triggers e Functions para Logs
+-- Functions e Triggers para logs das tabelas
 -- ============================================
 
--- Function para log de Responsaveis
-CREATE OR REPLACE FUNCTION log_responsaveis()
+-- Function genérica para logs detalhados
+CREATE OR REPLACE FUNCTION log_detalhado()
 RETURNS TRIGGER AS $$
+DECLARE
+    v_alteracao TEXT;
+    v_id_field TEXT;
+    v_id_value TEXT;
 BEGIN
-    INSERT INTO LogResponsaveis(cpf, operacao, alteracao)
-    VALUES (COALESCE(NEW.cpf, OLD.cpf), TG_OP, 'Dados alterados');
-    RETURN NEW;
+    IF (TG_OP = 'DELETE') THEN
+        v_alteracao := 'Registro excluído: ' || row_to_json(OLD)::TEXT;
+        v_id_field := TG_ARGV[0];
+        EXECUTE format('INSERT INTO %I(%I, operacao, alteracao) VALUES ($1, $2, $3)',
+            TG_ARGV[1], v_id_field)
+        USING OLD.*::JSON->>v_id_field, TG_OP, v_alteracao;
+        RETURN OLD;
+    ELSIF (TG_OP = 'UPDATE') THEN
+        v_alteracao := 'Registro atualizado de: ' || row_to_json(OLD)::TEXT || ' para ' || row_to_json(NEW)::TEXT;
+        v_id_field := TG_ARGV[0];
+        EXECUTE format('INSERT INTO %I(%I, operacao, alteracao) VALUES ($1, $2, $3)',
+            TG_ARGV[1], v_id_field)
+        USING NEW.*::JSON->>v_id_field, TG_OP, v_alteracao;
+        RETURN NEW;
+    ELSIF (TG_OP = 'INSERT') THEN
+        v_alteracao := 'Registro inserido: ' || row_to_json(NEW)::TEXT;
+        v_id_field := TG_ARGV[0];
+        EXECUTE format('INSERT INTO %I(%I, operacao, alteracao) VALUES ($1, $2, $3)',
+            TG_ARGV[1], v_id_field)
+        USING NEW.*::JSON->>v_id_field, TG_OP, v_alteracao;
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Triggers usando a função genérica
+
+-- Trigger para Enderecos
+CREATE TRIGGER trg_log_enderecos
+AFTER INSERT OR UPDATE OR DELETE ON Enderecos
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('id', 'LogEnderecos');
+
+-- Trigger para Fotos
+CREATE TRIGGER trg_log_fotos
+AFTER INSERT OR UPDATE OR DELETE ON Fotos
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('id', 'LogFotos');
+
+-- Trigger para Telefones
+CREATE TRIGGER trg_log_telefones
+AFTER INSERT OR UPDATE OR DELETE ON Telefones
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('id', 'LogTelefones');
+
+-- Trigger para Escolas
+CREATE TRIGGER trg_log_escolas
+AFTER INSERT OR UPDATE OR DELETE ON Escolas
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('id', 'LogEscolas');
+
+-- Trigger para Responsaveis
 CREATE TRIGGER trg_log_responsaveis
 AFTER INSERT OR UPDATE OR DELETE ON Responsaveis
-FOR EACH ROW EXECUTE PROCEDURE log_responsaveis();
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('cpf', 'LogResponsaveis');
 
--- Function para log de Transportadores
-CREATE OR REPLACE FUNCTION log_transportadores()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO LogTransportadores(cnh, operacao, alteracao)
-    VALUES (COALESCE(NEW.cnh, OLD.cnh), TG_OP, 'Dados alterados');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Trigger para Transportadores
 CREATE TRIGGER trg_log_transportadores
 AFTER INSERT OR UPDATE OR DELETE ON Transportadores
-FOR EACH ROW EXECUTE PROCEDURE log_transportadores();
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('cnh', 'LogTransportadores');
 
--- Function para log de Alunos
-CREATE OR REPLACE FUNCTION log_alunos()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO LogAlunos(cpf, operacao, alteracao)
-    VALUES (COALESCE(NEW.cpf, OLD.cpf), TG_OP, 'Dados alterados');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_log_alunos
-AFTER INSERT OR UPDATE OR DELETE ON Alunos
-FOR EACH ROW EXECUTE PROCEDURE log_alunos();
-
--- Function para log de Vans
-CREATE OR REPLACE FUNCTION log_vans()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO LogVans(placa, operacao, alteracao)
-    VALUES (COALESCE(NEW.placa, OLD.placa), TG_OP, 'Dados alterados');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Trigger para Vans
 CREATE TRIGGER trg_log_vans
 AFTER INSERT OR UPDATE OR DELETE ON Vans
-FOR EACH ROW EXECUTE PROCEDURE log_vans();
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('placa', 'LogVans');
+
+-- Trigger para Alunos
+CREATE TRIGGER trg_log_alunos
+AFTER INSERT OR UPDATE OR DELETE ON Alunos
+FOR EACH ROW EXECUTE PROCEDURE log_detalhado('cpf', 'LogAlunos');
 
 -- ============================================
 -- Procedures de Inserção, Atualização e Deleção
@@ -189,11 +258,24 @@ CREATE OR REPLACE PROCEDURE inserir_responsavel(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF EXISTS (SELECT 1 FROM Responsaveis WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'CPF já cadastrado.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Responsaveis WHERE email = p_email) THEN
+        RAISE EXCEPTION 'Email já cadastrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_telefone_id) THEN
+        RAISE EXCEPTION 'Telefone não encontrado.';
+    END IF;
     INSERT INTO Responsaveis (cpf, nome, dt_nascimento, email, senha, foto_id, endereco_id, telefone_id)
     VALUES (p_cpf, p_nome, p_dt_nascimento, p_email, p_senha, p_foto_id, p_endereco_id, p_telefone_id);
-EXCEPTION
-    WHEN UNIQUE_VIOLATION THEN
-        RAISE EXCEPTION 'CPF ou Email já cadastrado.';
 END;
 $$;
 
@@ -209,23 +291,36 @@ CREATE OR REPLACE PROCEDURE atualizar_responsavel(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF NOT EXISTS (SELECT 1 FROM Responsaveis WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'Responsável não encontrado.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Responsaveis WHERE email = p_email AND cpf != p_cpf) THEN
+        RAISE EXCEPTION 'Email já cadastrado para outro responsável.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_telefone_id) THEN
+        RAISE EXCEPTION 'Telefone não encontrado.';
+    END IF;
     UPDATE Responsaveis
     SET nome = p_nome, dt_nascimento = p_dt_nascimento, email = p_email, senha = p_senha,
         foto_id = p_foto_id, endereco_id = p_endereco_id, telefone_id = p_telefone_id
     WHERE cpf = p_cpf;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Responsável não encontrado.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_responsavel(p_cpf VARCHAR(11))
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Responsaveis WHERE cpf = p_cpf;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Responsaveis WHERE cpf = p_cpf) THEN
         RAISE EXCEPTION 'Responsável não encontrado.';
     END IF;
+    DELETE FROM Responsaveis WHERE cpf = p_cpf;
 END;
 $$;
 
@@ -242,11 +337,24 @@ CREATE OR REPLACE PROCEDURE inserir_transportador(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF EXISTS (SELECT 1 FROM Transportadores WHERE cnh = p_cnh) THEN
+        RAISE EXCEPTION 'CNH já cadastrada.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Transportadores WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'CPF já cadastrado.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Transportadores WHERE email = p_email) THEN
+        RAISE EXCEPTION 'Email já cadastrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_telefone_id) THEN
+        RAISE EXCEPTION 'Telefone não encontrado.';
+    END IF;
     INSERT INTO Transportadores (cnh, cpf, nome, dt_nascimento, email, senha, foto_id, telefone_id)
     VALUES (p_cnh, p_cpf, p_nome, p_dt_nascimento, p_email, p_senha, p_foto_id, p_telefone_id);
-EXCEPTION
-    WHEN UNIQUE_VIOLATION THEN
-        RAISE EXCEPTION 'CNH, CPF ou Email já cadastrado.';
 END;
 $$;
 
@@ -262,23 +370,36 @@ CREATE OR REPLACE PROCEDURE atualizar_transportador(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF NOT EXISTS (SELECT 1 FROM Transportadores WHERE cnh = p_cnh) THEN
+        RAISE EXCEPTION 'Transportador não encontrado.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Transportadores WHERE cpf = p_cpf AND cnh != p_cnh) THEN
+        RAISE EXCEPTION 'CPF já cadastrado para outro transportador.';
+    END IF;
+    IF EXISTS (SELECT 1 FROM Transportadores WHERE email = p_email AND cnh != p_cnh) THEN
+        RAISE EXCEPTION 'Email já cadastrado para outro transportador.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_telefone_id) THEN
+        RAISE EXCEPTION 'Telefone não encontrado.';
+    END IF;
     UPDATE Transportadores
     SET cpf = p_cpf, nome = p_nome, dt_nascimento = p_dt_nascimento, email = p_email,
         senha = p_senha, foto_id = p_foto_id, telefone_id = p_telefone_id
     WHERE cnh = p_cnh;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Transportador não encontrado.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_transportador(p_cnh VARCHAR(11))
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Transportadores WHERE cnh = p_cnh;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Transportadores WHERE cnh = p_cnh) THEN
         RAISE EXCEPTION 'Transportador não encontrado.';
     END IF;
+    DELETE FROM Transportadores WHERE cnh = p_cnh;
 END;
 $$;
 
@@ -296,11 +417,24 @@ CREATE OR REPLACE PROCEDURE inserir_aluno(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF EXISTS (SELECT 1 FROM Alunos WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'CPF já cadastrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Escolas WHERE id = p_escola_id) THEN
+        RAISE EXCEPTION 'Escola não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_id_foto) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Responsaveis WHERE cpf = p_responsavel_cpf) THEN
+        RAISE EXCEPTION 'Responsável não encontrado.';
+    END IF;
     INSERT INTO Alunos (cpf, nome, dt_nascimento, escola_id, pcd, id_foto, endereco_id, responsavel_cpf, turno)
     VALUES (p_cpf, p_nome, p_dt_nascimento, p_escola_id, p_pcd, p_id_foto, p_endereco_id, p_responsavel_cpf, p_turno);
-EXCEPTION
-    WHEN FOREIGN_KEY_VIOLATION THEN
-        RAISE EXCEPTION 'Chave estrangeira inválida.';
 END;
 $$;
 
@@ -317,24 +451,37 @@ CREATE OR REPLACE PROCEDURE atualizar_aluno(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF NOT EXISTS (SELECT 1 FROM Alunos WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'Aluno não encontrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Escolas WHERE id = p_escola_id) THEN
+        RAISE EXCEPTION 'Escola não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_id_foto) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Responsaveis WHERE cpf = p_responsavel_cpf) THEN
+        RAISE EXCEPTION 'Responsável não encontrado.';
+    END IF;
     UPDATE Alunos
     SET nome = p_nome, dt_nascimento = p_dt_nascimento, escola_id = p_escola_id,
         pcd = p_pcd, id_foto = p_id_foto, endereco_id = p_endereco_id,
         responsavel_cpf = p_responsavel_cpf, turno = p_turno
     WHERE cpf = p_cpf;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Aluno não encontrado.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_aluno(p_cpf VARCHAR(11))
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Alunos WHERE cpf = p_cpf;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Alunos WHERE cpf = p_cpf) THEN
         RAISE EXCEPTION 'Aluno não encontrado.';
     END IF;
+    DELETE FROM Alunos WHERE cpf = p_cpf;
 END;
 $$;
 
@@ -350,13 +497,18 @@ CREATE OR REPLACE PROCEDURE inserir_van(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF EXISTS (SELECT 1 FROM Vans WHERE placa = p_placa) THEN
+        RAISE EXCEPTION 'Placa já cadastrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Transportadores WHERE cnh = p_transportador_cnh) THEN
+        RAISE EXCEPTION 'Transportador não encontrado.';
+    END IF;
     INSERT INTO Vans (placa, modelo, acessibilidade, mensalidade, foto_id, transportador_cnh, capacidade)
     VALUES (p_placa, p_modelo, p_acessibilidade, p_mensalidade, p_foto_id, p_transportador_cnh, p_capacidade);
-EXCEPTION
-    WHEN FOREIGN_KEY_VIOLATION THEN
-        RAISE EXCEPTION 'Transportador não encontrado.';
-    WHEN UNIQUE_VIOLATION THEN
-        RAISE EXCEPTION 'Placa já cadastrada.';
 END;
 $$;
 
@@ -371,23 +523,30 @@ CREATE OR REPLACE PROCEDURE atualizar_van(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- Validações
+    IF NOT EXISTS (SELECT 1 FROM Vans WHERE placa = p_placa) THEN
+        RAISE EXCEPTION 'Van não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_foto_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Transportadores WHERE cnh = p_transportador_cnh) THEN
+        RAISE EXCEPTION 'Transportador não encontrado.';
+    END IF;
     UPDATE Vans
     SET modelo = p_modelo, acessibilidade = p_acessibilidade, mensalidade = p_mensalidade,
         foto_id = p_foto_id, transportador_cnh = p_transportador_cnh, capacidade = p_capacidade
     WHERE placa = p_placa;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Van não encontrada.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_van(p_placa VARCHAR(7))
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Vans WHERE placa = p_placa;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Vans WHERE placa = p_placa) THEN
         RAISE EXCEPTION 'Van não encontrada.';
     END IF;
+    DELETE FROM Vans WHERE placa = p_placa;
 END;
 $$;
 
@@ -414,22 +573,22 @@ CREATE OR REPLACE PROCEDURE atualizar_endereco(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
     UPDATE Enderecos
     SET cep = p_cep, bairro = p_bairro, rua = p_rua, numero = p_numero
     WHERE id = p_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Endereço não encontrado.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_endereco(p_id INT)
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Enderecos WHERE id = p_id;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_id) THEN
         RAISE EXCEPTION 'Endereço não encontrado.';
     END IF;
+    DELETE FROM Enderecos WHERE id = p_id;
 END;
 $$;
 
@@ -452,22 +611,22 @@ CREATE OR REPLACE PROCEDURE atualizar_telefone(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_id) THEN
+        RAISE EXCEPTION 'Telefone não encontrado.';
+    END IF;
     UPDATE Telefones
     SET numero = p_numero, tipo = p_tipo
     WHERE id = p_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Telefone não encontrado.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_telefone(p_id INT)
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Telefones WHERE id = p_id;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Telefones WHERE id = p_id) THEN
         RAISE EXCEPTION 'Telefone não encontrado.';
     END IF;
+    DELETE FROM Telefones WHERE id = p_id;
 END;
 $$;
 
@@ -482,22 +641,22 @@ $$;
 CREATE OR REPLACE PROCEDURE atualizar_foto(p_id INT, p_url VARCHAR(255))
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_id) THEN
+        RAISE EXCEPTION 'Foto não encontrada.';
+    END IF;
     UPDATE Fotos
     SET url = p_url
     WHERE id = p_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Foto não encontrada.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_foto(p_id INT)
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Fotos WHERE id = p_id;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Fotos WHERE id = p_id) THEN
         RAISE EXCEPTION 'Foto não encontrada.';
     END IF;
+    DELETE FROM Fotos WHERE id = p_id;
 END;
 $$;
 
@@ -508,6 +667,9 @@ CREATE OR REPLACE PROCEDURE inserir_escola(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
     INSERT INTO Escolas (nome, endereco_id)
     VALUES (p_nome, p_endereco_id);
 END;
@@ -520,24 +682,73 @@ CREATE OR REPLACE PROCEDURE atualizar_escola(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM Escolas WHERE id = p_id) THEN
+        RAISE EXCEPTION 'Escola não encontrada.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM Enderecos WHERE id = p_endereco_id) THEN
+        RAISE EXCEPTION 'Endereço não encontrado.';
+    END IF;
     UPDATE Escolas
     SET nome = p_nome, endereco_id = p_endereco_id
     WHERE id = p_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Escola não encontrada.';
-    END IF;
 END;
 $$;
 
 CREATE OR REPLACE PROCEDURE deletar_escola(p_id INT)
 LANGUAGE plpgsql AS $$
 BEGIN
-    DELETE FROM Escolas WHERE id = p_id;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM Escolas WHERE id = p_id) THEN
         RAISE EXCEPTION 'Escola não encontrada.';
     END IF;
+    DELETE FROM Escolas WHERE id = p_id;
 END;
 $$;
+
+-- ============================================
+-- Índices para Otimização
+-- ============================================
+
+-- Índice na tabela Responsaveis para pesquisa por email
+CREATE UNIQUE INDEX idx_responsaveis_email ON Responsaveis(email);
+
+-- Índice na tabela Responsaveis para pesquisa por endereço
+CREATE INDEX idx_responsaveis_endereco_id ON Responsaveis(endereco_id);
+
+-- Índice na tabela Responsaveis para pesquisa por telefone
+CREATE INDEX idx_responsaveis_telefone_id ON Responsaveis(telefone_id);
+
+-- Índice na tabela Transportadores para pesquisa por email
+CREATE UNIQUE INDEX idx_transportadores_email ON Transportadores(email);
+
+-- Índice na tabela Transportadores para pesquisa por CPF
+CREATE UNIQUE INDEX idx_transportadores_cpf ON Transportadores(cpf);
+
+-- Índice na tabela Transportadores para pesquisa por telefone
+CREATE INDEX idx_transportadores_telefone_id ON Transportadores(telefone_id);
+
+-- Índice na tabela Alunos para pesquisa por escola
+CREATE INDEX idx_alunos_escola_id ON Alunos(escola_id);
+
+-- Índice na tabela Alunos para pesquisa por responsável
+CREATE INDEX idx_alunos_responsavel_cpf ON Alunos(responsavel_cpf);
+
+-- Índice na tabela Alunos para pesquisa por turno
+CREATE INDEX idx_alunos_turno ON Alunos(turno);
+
+-- Índice na tabela Vans para pesquisa por transportador
+CREATE INDEX idx_vans_transportador_cnh ON Vans(transportador_cnh);
+
+-- Índice na tabela Enderecos para pesquisa por CEP
+CREATE INDEX idx_enderecos_cep ON Enderecos(cep);
+
+-- Índice na tabela Telefones para pesquisa por número
+CREATE INDEX idx_telefones_numero ON Telefones(numero);
+
+-- Índice na tabela Escolas para pesquisa por nome
+CREATE INDEX idx_escolas_nome ON Escolas(nome);
+
+-- Índice na tabela Fotos para otimizar JOINs
+CREATE INDEX idx_fotos_id ON Fotos(id);
 
 -- ============================================
 -- Inserts de Dados
@@ -571,16 +782,16 @@ INSERT INTO Fotos (url) VALUES
 
 -- Inserts para a tabela Telefones
 INSERT INTO Telefones (numero, tipo) VALUES 
-('(071) 3311 7385', 'Transportador'),
-('+55 (061) 8454-7770', 'Transportador'),
-('(011) 8836-0461', 'Transportador'),
-('+55 (031) 1039-1256', 'Transportador'),
-('(041) 4257 5766', 'Responsavel'),
-('(021) 99876-5432', 'Transportador'),
-('(019) 98765-4321', 'Transportador'),
-('(031) 12345-6789', 'Transportador'),
-('(041) 99888-7777', 'Responsavel'),
-('(051) 99999-8888', 'Responsavel');
+('+55 3311-7385', 'Transportador'),
+('+55 8454-7770', 'Transportador'),
+('+55 8836-0461', 'Transportador'),
+('+55 1039-1256', 'Transportador'),
+('+55 4257-5766', 'Responsavel'),
+('+55 9876-5432', 'Transportador'),
+('+55 9876-5432', 'Transportador'),
+('+55 1234-5678', 'Transportador'),
+('+55 9888-7777', 'Responsavel'),
+('+55 9999-8888', 'Responsavel');
 
 -- Inserts para a tabela Responsaveis
 INSERT INTO Responsaveis (cpf, nome, dt_nascimento, email, senha, foto_id, endereco_id, telefone_id) VALUES 
